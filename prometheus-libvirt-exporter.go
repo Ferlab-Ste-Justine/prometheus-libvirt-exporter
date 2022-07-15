@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"ferlab/prometheus-libvirt-exporter/libvirt_schema"
 	"github.com/digitalocean/go-libvirt"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/zhangjianweibj/prometheus-libvirt-exporter/libvirt_schema"
 	"go.uber.org/zap"
 )
 
@@ -534,16 +534,21 @@ func (e *LibvirtExporter) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func main() {
-	logger, _ = zap.NewProduction()
-	defer logger.Sync()
-
 	var (
+		debugMode     = flag.String("debug-mode", "no", "Whether debug logs should be displayed or not. Can be 'yes' or 'no'.")
 		listenAddress = flag.String("web.listen-address", ":9000", "Address to listen on for web interface and telemetry.")
 		metricsPath   = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
 		libvirtURI    = flag.String("libvirt.uri", "/var/run/libvirt/libvirt-sock-ro", "Libvirt URI from which to extract metrics.")
 		driver        = flag.String("libvirt.driver", string(libvirt.QEMUSystem), fmt.Sprintf("Available drivers: %s (Default), %s, %s and %s ", libvirt.QEMUSystem, libvirt.QEMUSession, libvirt.XenSystem, libvirt.TestDefault))
 	)
 	flag.Parse()
+
+	if *debugMode == "yes" {
+		logger, _ = zap.NewDevelopment()
+	} else {
+		logger, _ = zap.NewProduction()
+	}
+	defer logger.Sync()
 
 	exporter, err := NewLibvirtExporter(*libvirtURI, libvirt.ConnectURI(*driver))
 	if err != nil {
