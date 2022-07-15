@@ -90,23 +90,37 @@ var (
 	libvirtDomainBlockRdBytesDesc = prometheus.NewDesc(
 		prometheus.BuildFQName("libvirt", "domain_block_stats", "read_bytes_total"),
 		"Number of bytes read from a block device, in bytes.",
-		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device"},
+		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device", "volume", "pool"},
 		nil)
 	libvirtDomainBlockRdReqDesc = prometheus.NewDesc(
 		prometheus.BuildFQName("libvirt", "domain_block_stats", "read_requests_total"),
 		"Number of read requests from a block device.",
-		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device"},
+		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device", "volume", "pool"},
 		nil)
 	libvirtDomainBlockWrBytesDesc = prometheus.NewDesc(
 		prometheus.BuildFQName("libvirt", "domain_block_stats", "write_bytes_total"),
 		"Number of bytes written from a block device, in bytes.",
-		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device"},
+		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device", "volume", "pool"},
 		nil)
 	libvirtDomainBlockWrReqDesc = prometheus.NewDesc(
 		prometheus.BuildFQName("libvirt", "domain_block_stats", "write_requests_total"),
 		"Number of write requests from a block device.",
-		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device"},
+		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device", "volume", "pool"},
 		nil)
+
+	//DomainDisk
+	libvirtDomainDiskCapacityDesc = prometheus.NewDesc(
+		prometheus.BuildFQName("libvirt", "domain_disk_info", "capacity_bytes"),
+		"Maximum capacity of the disk, in bytes.",
+		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device", "volume", "pool"},
+		nil,
+	)
+	libvirtDomainDiskAllocationDesc = prometheus.NewDesc(
+		prometheus.BuildFQName("libvirt", "domain_disk_stat", "allocation_bytes"),
+		"Size allocation on the disk, in bytes.",
+		[]string{"domain", "instanceName", "instanceId", "flavorName", "userName", "userId", "projectName", "projectId", "host", "source_file", "target_device", "volume", "pool"},
+		nil,
+	)
 
 	//DomainInterface
 	libvirtDomainInterfaceRxBytesDesc = prometheus.NewDesc(
@@ -290,6 +304,9 @@ func CollectFromLibvirt(ch chan<- prometheus.Metric, uri string, driver libvirt.
 // CollectDomain extracts Prometheus metrics from a libvirt domain.
 func CollectDomain(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domainMeta) (err error) {
 	var host string
+	
+	logger.Debug("Exposing metrics for domain", zap.String("domain", domain.domainName))
+
 	if host, err = l.ConnectGetHostname(); err != nil {
 		logger.Error("failed to get hostname", zap.Error(err))
 		return err
@@ -331,7 +348,7 @@ func CollectDomain(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domai
 		return nil
 	}
 
-	for _, collectFunc := range []collectFunc{CollectDomainBlockDeviceInfo, CollectDomainNetworkInfo, CollectDomainDomainStatInfo} {
+	for _, collectFunc := range []collectFunc{CollectDomainBlockDeviceInfo, CollectDomainDiskInfo, CollectDomainNetworkInfo, CollectDomainDomainStatInfo} {
 		if err = collectFunc(ch, l, domain, promLabels); err != nil {
 			logger.Warn("failed to collect some domain info", zap.Error(err))
 		}
@@ -340,20 +357,79 @@ func CollectDomain(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domai
 	return nil
 }
 
-func CollectDomainBlockDeviceInfo(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domainMeta, promLabels []string) (err error) {
-	// Report block device statistics.
+func CollectDomainDiskInfo(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domainMeta, promLabels []string) (err error) {
 	for _, disk := range domain.libvirtSchema.Devices.Disks {
-		if disk.Device == "cdrom" || disk.Device == "fd" {
+		logger.Debug("Exposing space metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File), zap.String("pool", disk.Source.Pool), zap.String("volume", disk.Source.Volume))
+	
+		if disk.Source.File == "" && (disk.Source.Volume == "" || disk.Source.Pool == "") {
+			logger.Debug("Will not collect space metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File))
 			continue
 		}
 
+		promDiskLabels := append(promLabels, disk.Source.File, disk.Target.Device, disk.Source.Volume, disk.Source.Pool)
+		
+		var storageVol libvirt.StorageVol
+		var storageVolErr error
+		if disk.Source.File != "" {
+			storageVol, storageVolErr = l.StorageVolLookupByPath(disk.Source.File)
+			if storageVolErr != nil {
+				logger.Warn("Failed to get StorageVolLookupByPath", zap.Error(storageVolErr))
+				return storageVolErr
+			}
+		} else {
+			storagePool, storagePoolErr := l.StoragePoolLookupByName(disk.Source.Pool)
+			if storagePoolErr != nil {
+				logger.Warn("Failed to get StoragePoolLookupByName", zap.Error(storagePoolErr))
+				return storagePoolErr
+			}
+
+			storageVol, storageVolErr = l.StorageVolLookupByName(storagePool, disk.Source.Volume)
+			if storageVolErr != nil {
+				logger.Warn("Failed to get StorageVolLookupByName", zap.Error(storageVolErr))
+				return storageVolErr
+			}
+		}
+
+		_, volCap, volAlloc, volErr := l.StorageVolGetInfo(storageVol)
+		if volErr != nil {
+			logger.Warn("Failed to get StorageVolGetInfo", zap.Error(volErr))
+			return volErr
+		}
+
+		ch <- prometheus.MustNewConstMetric(
+			libvirtDomainDiskCapacityDesc,
+			prometheus.GaugeValue,
+			float64(volCap),
+			promDiskLabels...)
+
+		ch <- prometheus.MustNewConstMetric(
+			libvirtDomainDiskAllocationDesc,
+			prometheus.GaugeValue,
+			float64(volAlloc),
+			promDiskLabels...)
+	}
+
+	return nil
+}
+
+func CollectDomainBlockDeviceInfo(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domainMeta, promLabels []string) (err error) {
+	// Report block device statistics.
+	for _, disk := range domain.libvirtSchema.Devices.Disks {
+		logger.Debug("Exposing operations metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File), zap.String("pool", disk.Source.Pool), zap.String("volume", disk.Source.Volume))
+
+		if disk.Device == "cdrom" || disk.Device == "fd" {
+			logger.Debug("Will not collect operation metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File))
+			continue
+		}
+
+		promDiskLabels := append(promLabels, disk.Source.File, disk.Target.Device, disk.Source.Volume, disk.Source.Pool)
+
 		var rRdReq, rRdBytes, rWrReq, rWrBytes int64
 		if rRdReq, rRdBytes, rWrReq, rWrBytes, _, err = l.DomainBlockStats(domain.libvirtDomain, disk.Target.Device); err != nil {
-			logger.Warn("failed to get DomainBlockStats", zap.Error(err))
+			logger.Warn("Failed to get DomainBlockStats", zap.Error(err))
 			return err
 		}
 
-		promDiskLabels := append(promLabels, disk.Source.File, disk.Target.Device)
 		ch <- prometheus.MustNewConstMetric(
 			libvirtDomainBlockRdBytesDesc,
 			prometheus.CounterValue,
@@ -379,7 +455,8 @@ func CollectDomainBlockDeviceInfo(ch chan<- prometheus.Metric, l *libvirt.Libvir
 			promDiskLabels...)
 
 	}
-	return
+
+	return nil
 }
 
 func CollectDomainNetworkInfo(ch chan<- prometheus.Metric, l *libvirt.Libvirt, domain domainMeta, promLabels []string) (err error) {
