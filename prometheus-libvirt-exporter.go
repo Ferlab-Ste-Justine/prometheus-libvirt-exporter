@@ -362,7 +362,7 @@ func CollectDomainDiskInfo(ch chan<- prometheus.Metric, l *libvirt.Libvirt, doma
 		logger.Debug("Exposing space metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File), zap.String("pool", disk.Source.Pool), zap.String("volume", disk.Source.Volume))
 	
 		if disk.Source.File == "" && (disk.Source.Volume == "" || disk.Source.Pool == "") {
-			logger.Debug("Will not collect space metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File))
+			logger.Debug("Will not collect space metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File), zap.String("pool", disk.Source.Pool), zap.String("volume", disk.Source.Volume))
 			continue
 		}
 
@@ -418,7 +418,7 @@ func CollectDomainBlockDeviceInfo(ch chan<- prometheus.Metric, l *libvirt.Libvir
 		logger.Debug("Exposing operations metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File), zap.String("pool", disk.Source.Pool), zap.String("volume", disk.Source.Volume))
 
 		if disk.Device == "cdrom" || disk.Device == "fd" {
-			logger.Debug("Will not collect operation metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File))
+			logger.Debug("Will not collect operation metrics for domain disk", zap.String("domain", domain.domainName), zap.String("file", disk.Source.File), zap.String("pool", disk.Source.Pool), zap.String("volume", disk.Source.Volume))
 			continue
 		}
 
