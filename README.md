@@ -12,14 +12,14 @@ Run the binary with the **--help** flag to see the customization options.
 
 The domain metrics all contain the following base labels:
 - **domain**
-- **flavorName**
+- **flavor_name**
 - **host**
-- **instanceId**
-- **instanceName**
-- **projectId**
-- **projectName**
-- **userId**
-- **userName**
+- **instance_id**
+- **instance_name**
+- **project_id**
+- **project_name**
+- **user_id**
+- **user_name**
 
 The block metrics contain the following additional labels:
 - **pool**
